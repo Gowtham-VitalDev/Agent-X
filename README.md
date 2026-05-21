@@ -235,4 +235,4 @@ Full platform code is private. Architecture and design decisions documented abov
 
 ## Contact
 
-Built by [Your Name] · [your@email.com] · [linkedin.com/in/yourhandle]
+Built by [Gowtham Gokana] · [gvsgowtham95.com] · [[linkedin.com/in/yourhandle](https://www.linkedin.com/in/gowtham-gokana/)]
