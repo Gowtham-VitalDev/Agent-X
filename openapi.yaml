@@ -1,0 +1,235 @@
+openapi: 3.1.0
+info:
+  title: Agentify Agent Execution API
+  version: 1.0.0
+  description: |
+    Public API for interacting with published Agentify agents.
+    Used by embedded widgets and direct API consumers.
+
+    Authentication: All endpoints require a `X-Agent-Key` header containing
+    the agent-scoped public API key. Keys are scoped to a single agentId —
+    they cannot access other agents or user data.
+
+servers:
+  - url: https://agentify.app/api
+    description: Production
+
+security:
+  - AgentKeyAuth: []
+
+paths:
+  /agent/{agentId}/chat:
+    post:
+      operationId: agentChat
+      summary: Send a message to a published agent
+      description: |
+        Submits a user message to the specified agent and receives a streamed response.
+        Responses are Server-Sent Events (SSE) — each event contains a token chunk.
+        The stream terminates with a `[DONE]` event.
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Convex ID of the published agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+            example:
+              sessionId: "550e8400-e29b-41d4-a716-446655440000"
+              message: "How do I reset my password?"
+              history:
+                - role: "assistant"
+                  content: "Hello! How can I help you today?"
+      responses:
+        '200':
+          description: Streaming SSE response
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                data: {"type":"token","content":"Sure"}
+                data: {"type":"token","content":", here"}
+                data: {"type":"token","content":" are the steps..."}
+                data: {"type":"done","inputTokens":42,"outputTokens":87}
+                data: [DONE]
+        '429':
+          description: Rate limit exceeded (Arcjet)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "RATE_LIMITED"
+                message: "Too many requests. Free tier allows 50 requests per day."
+                retryAfter: 3600
+        '403':
+          description: Invalid or expired API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Agent not found or not published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /agent/{agentId}/conversation/{sessionId}:
+    get:
+      operationId: getConversationHistory
+      summary: Retrieve conversation history for a session
+      description: |
+        Returns all messages for a given session. Used by the embedded widget
+        to restore conversation state on page reload.
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+      responses:
+        '200':
+          description: Conversation history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationHistory'
+
+  /agent/{agentId}/config:
+    get:
+      operationId: getAgentConfig
+      summary: Retrieve public agent configuration
+      description: |
+        Returns non-sensitive agent config for the embedded widget:
+        name, description, welcome message, UI theme settings.
+        Does NOT expose system prompt, model settings, or API keys.
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Public agent config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicAgentConfig'
+
+components:
+  securitySchemes:
+    AgentKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Agent-Key
+      description: Agent-scoped public API key. Generated on agent publish. Cannot access other agents or user data.
+
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - sessionId
+        - message
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+          description: Client-generated session identifier. Persists conversation across page loads.
+        message:
+          type: string
+          maxLength: 4096
+          description: User's message text. Validated and sanitized server-side.
+        history:
+          type: array
+          maxItems: 20
+          description: Recent conversation turns for context. Server enforces contextWindowTurns limit from agent config.
+          items:
+            $ref: '#/components/schemas/MessageTurn'
+
+    MessageTurn:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+
+    ConversationHistory:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        createdAt:
+          type: integer
+          description: Unix timestamp (ms)
+
+    PublicAgentConfig:
+      type: object
+      properties:
+        agentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        welcomeMessage:
+          type: string
+        theme:
+          type: object
+          properties:
+            primaryColor:
+              type: string
+            avatarUrl:
+              type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable description
+        retryAfter:
+          type: integer
+          description: Seconds until retry is allowed (rate limit errors only)
